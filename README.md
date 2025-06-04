@@ -19,6 +19,14 @@
     docker build -t trip .
     ```
 
+Build the apptainer def file (on Frontier):
+```
+module load rocm/6.4.0
+module load olcf-container-tools
+module load apptainer-enable-gpu
+apptainer build --sandbox trip_sandbox apptainer.def
+```
+
 4. Start an interactive session in the NGC container
     ```
     docker run -it --gpus all --shm-size=128g --ulimit memlock=-1 --ulimit stack=6710886400 --rm -v ${PWD}/results:/results trip:latest

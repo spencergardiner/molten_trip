@@ -66,6 +66,7 @@ class TrIPDataModule(DataModule):
         # Make dataset
         self.ds_train = self._make_ds(container, 'train')
         self.ds_val = self._make_ds(container, 'val')
+
         # self.ds_test = self._make_ds(container, 'test')  # dont have a test data set
 
     def _calc_si(self, container):

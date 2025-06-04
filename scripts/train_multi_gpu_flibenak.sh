@@ -5,7 +5,7 @@ BATCH_SIZE=${1:-12}
 AMP=${2:-true}
 NUM_EPOCHS=${3:-10}
 LEARNING_RATE=${4:-1e-3}
-WEIGHT_DECAY=${5:-0.1}
+WEIGHT_DECAY=${5:-0.75}
  
 python -m torch.distributed.run --nnodes=1 --nproc_per_node=gpu --max_restarts 0 --module \
  trip.runtime.training \
@@ -14,18 +14,18 @@ python -m torch.distributed.run --nnodes=1 --nproc_per_node=gpu --max_restarts 0
  --epochs "$NUM_EPOCHS" \
  --lr "$LEARNING_RATE" \
  --gamma 0.5 \
- --cutoff 5.8 \
+ --cutoff 5 \
  --weight_decay "$WEIGHT_DECAY" \
  --use_layer_norm \
  --norm \
- --save_ckpt_path results/model_trip2_flibenak.pth \
+ --save_ckpt_path results/frontier_model_default.pth \
  --seed 42 \
  --num_workers 4 \
  --gradient_clip 10.0 \
- --wandb \
  --eval_interval 1 \
- --force_weight 0.1 \
+ --force_weight 0.5 \
  --ckpt_interval 1 \
  --data_file results/processed_flibenak.h5 \
+ --dllogger_name frontier_model_default.json \
  
   

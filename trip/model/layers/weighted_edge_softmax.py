@@ -42,7 +42,7 @@ class WeightedEdgeSoftmax(nn.Module):
         graph.edata[self._logits_name] = logits
 
         # compute the softmax
-        graph.update_all(fn.copy_edge(self._logits_name, self._logits_name),
+        graph.update_all(fn.copy_e(self._logits_name, self._logits_name),
                          fn.max(self._logits_name, self._max_logits_name))
         # minus the max and exp
         if scale is None:  # Use original code
@@ -56,7 +56,7 @@ class WeightedEdgeSoftmax(nn.Module):
                     edges.data[self._scale_name] * th.exp(edges.data[self._logits_name] -
                                                         edges.dst[self._max_logits_name])})
         # compute normalizer
-        graph.update_all(fn.copy_edge(self._logits_name, self._logits_name),
+        graph.update_all(fn.copy_e(self._logits_name, self._logits_name),
                          fn.sum(self._logits_name, self._normalizer_name))
         return graph.edata.pop(self._logits_name)
 

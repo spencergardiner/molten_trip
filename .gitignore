@@ -1,2 +1,8 @@
 results/
 .vscode/
+dgl/
+libhipcxx/
+.conda_env/
+apptainer_sandbox/
+build-temp*
+__pycache__

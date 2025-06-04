@@ -101,14 +101,18 @@ def init_distributed() -> bool:
 
 
 def increase_l2_fetch_granularity():
-    # maximum fetch granularity of L2: 128 bytes
-    _libcudart = ctypes.CDLL('libcudart.so')
-    # set device limit on the current device
-    # cudaLimitMaxL2FetchGranularity = 0x05
-    pValue = ctypes.cast((ctypes.c_int * 1)(), ctypes.POINTER(ctypes.c_int))
-    _libcudart.cudaDeviceSetLimit(ctypes.c_int(0x05), ctypes.c_int(128))
-    _libcudart.cudaDeviceGetLimit(pValue, ctypes.c_int(0x05))
-    assert pValue.contents.value == 128
+    pass  # AMD ROCm
+
+    # NVIDIA CUDA
+    #############
+    # # maximum fetch granularity of L2: 128 bytes
+    # _libcudart = ctypes.CDLL('libcudart.so')
+    # # set device limit on the current device
+    # # cudaLimitMaxL2FetchGranularity = 0x05
+    # pValue = ctypes.cast((ctypes.c_int * 1)(), ctypes.POINTER(ctypes.c_int))
+    # _libcudart.cudaDeviceSetLimit(ctypes.c_int(0x05), ctypes.c_int(128))
+    # _libcudart.cudaDeviceGetLimit(pValue, ctypes.c_int(0x05))
+    # assert pValue.contents.value == 128
 
 
 def seed_everything(seed):

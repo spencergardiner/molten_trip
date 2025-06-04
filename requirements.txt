@@ -1,4 +1,4 @@
-e3nn==0.3.3
+e3nn
 wandb==0.12.0
 pynvml==11.0.0
 git+https://github.com/NVIDIA/dllogger#egg=dllogger
@@ -9,3 +9,4 @@ MDAnalysis==2.4.3
 torchani==2.2.3
 cmaps==1.0.5
 pandas==2.0.1
+h5py

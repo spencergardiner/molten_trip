@@ -12,12 +12,12 @@ python -m trip.runtime.training \
  --batch_size "$BATCH_SIZE" \
  --epochs "$NUM_EPOCHS" \
  --lr "$LEARNING_RATE" \
- --gamma 0.5 \
+ --gamma 1 \
  --cutoff 4.6\
  --weight_decay "$WEIGHT_DECAY" \
  --use_layer_norm \
  --norm \
- --save_ckpt_path results/model_trip2_4_6_cutoff_flibenak.pth \
+ --save_ckpt_path /workspace/trip/results/model_trip2_4_6_cutoff_flibenak.pth \
  --seed 42 \
  --num_workers 4 \
  --gradient_clip 10.0 \
@@ -25,9 +25,9 @@ python -m trip.runtime.training \
  --eval_interval 1 \
  --force_weight 0.1 \
  --ckpt_interval 1 \
- --data_file results/processed_flibenak.h5 \
- --log_dir results/logs \
+ --data_file /workspace/trip/results/mini_flibenak.h5 \
+ --log_dir /workspace/trip/results/logs \
  --dllogger_name 4_6.json\
- --device_rank 1 \
+ --device_rank 0 \
  
   

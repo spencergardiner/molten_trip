@@ -29,6 +29,7 @@ from typing import List, Callable
 import warnings
 
 import numpy as np
+import torch.distributed
 from tqdm import tqdm
 
 import torch
@@ -38,8 +39,9 @@ from torch.nn.modules.loss import _Loss
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.distributed.elastic.multiprocessing.errors import record
 
-from se3_transformer.runtime import gpu_affinity
+# from se3_transformer.runtime import gpu_affinity
 from se3_transformer.runtime.callbacks import BaseCallback, PerformanceCallback
 from se3_transformer.runtime.loggers import LoggerCollection, DLLogger, WandbLogger, Logger
 from se3_transformer.runtime.training import print_parameters_count
@@ -79,6 +81,17 @@ def load_state(model: nn.Module, path: pathlib.Path, callbacks: List[BaseCallbac
     # verify that the checkpoint path is correct
     print("os.path.exists(path):", os.path.exists(path))
 
+    # old code: load model.optimizer for the callback get_scheduler
+    # new code: try several different ways to get the optimizer. Shows I dont really understand the code base.
+    optimizer = None
+    if hasattr(model, 'optimizer'):
+        optimizer = model.optimizer
+    elif hasattr(trip_model, 'optimizer'):
+        optimizer = trip_model.optimizer
+    elif hasattr(checkpoint, 'optimizer_state_dict'):
+        optimizer = checkpoint['optimizer_state_dict']
+
+
     for callback in callbacks:
         if hasattr(callback, 'get_scheduler'):
             # get the scheduler gamma from the checkpoint
@@ -88,7 +101,7 @@ def load_state(model: nn.Module, path: pathlib.Path, callbacks: List[BaseCallbac
                 def __init__(self, gamma):
                     self.gamma = gamma
             args = Args(gamma)
-            callback.__setattr__("scheduler", callback.get_scheduler(model.optimizer, args))
+            callback.__setattr__("scheduler", callback.get_scheduler(optimizer, args))
         callback.on_checkpoint_load(checkpoint)
 
     logging.info(f'Loaded checkpoint from {str(path)}')
@@ -195,24 +208,17 @@ def train(model: nn.Module,
           callbacks: List[BaseCallback],
           logger: Logger,
           args):
-    # device = torch.cuda.current_device()
-    os.environ["LOCAL_RANK"] = str(args.device_rank)
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_rank)
-    if "," in os.environ["CUDA_VISIBLE_DEVICES"]:
-        os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["CUDA_VISIBLE_DEVICES"].split(",")[args.device_rank]
-
-    device= torch.device("cuda", int(args.device_rank))
-    torch.cuda.set_device(device)
-
-    model.to(device=device)
 
     local_rank = get_local_rank()
     world_size = dist.get_world_size() if dist.is_initialized() else 1
 
+    device = torch.device("cuda", local_rank)
+    model = model.to(device=device)
+
     if dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
         model._set_static_graph()
+
 
     model.train()
     grad_scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
@@ -240,6 +246,9 @@ def train(model: nn.Module,
 
         if not args.benchmark and (
                 (args.eval_interval > 0 and (epoch_idx + 1) % args.eval_interval == 0) or epoch_idx + 1 == args.epochs):
+            
+            # make sure everything is on the same device!!!!
+            # model = model.to(device=device)
             evaluate(model, graph_constructor, val_dataloader, callbacks, args)
             model.train()
 
@@ -255,7 +264,9 @@ def train(model: nn.Module,
 
 
 
-if __name__ == '__main__':
+@record
+def main():
+    """ Main function for training TrIP """
     is_distributed = init_distributed()
     local_rank = get_local_rank()
     args = PARSER.parse_args()
@@ -278,6 +289,8 @@ if __name__ == '__main__':
     datamodule = TrIPDataModule(**vars(args))
     energy_std = datamodule.energy_std.item()
     logging.info(f'Dataset energy std: {energy_std:.5f}')
+    print(datamodule.ds_train.__len__(), 'train samples')
+    print(datamodule.ds_val.__len__(), 'validation samples')
 
 
 
@@ -302,8 +315,9 @@ if __name__ == '__main__':
                      TrIPMetricCallback(logger, targets_std=energy_std, prefix='forces validation'),
                      TrIPLRSchedulerCallback(logger)]
 
-    if is_distributed:
-        gpu_affinity.set_affinity(gpu_id=get_local_rank(), nproc_per_node=torch.cuda.device_count())
+    # if is_distributed:
+    #     # gpu_affinity.set_affinity(gpu_id=get_local_rank(), nproc_per_node=torch.cuda.device_count())
+
 
     print_parameters_count(model)
     logger.log_hyperparams(vars(args))
@@ -322,3 +336,6 @@ if __name__ == '__main__':
           args)
 
     logging.info('Training finished successfully')
+
+if __name__ == "__main__":
+    main()  # do this to log errors during distributed runs
