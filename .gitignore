@@ -6,3 +6,7 @@ libhipcxx/
 apptainer_sandbox/
 build-temp*
 __pycache__
+core.*
+models/
+logs/
+datasets/
