@@ -131,7 +131,7 @@ def train_epoch(model, graph_constructor, add_atom_data, train_dataloader, error
         for callback in callbacks:
             callback.on_batch_start()
 
-        with torch.cuda.amp.autocast(enabled=args.amp):
+        with torch.amp.autocast('cuda',enabled=args.amp):
             pred = model(graph, create_graph=True, standardized=True)
             energy_loss, forces_loss = loss_fn(pred, target)
             energy_error, forces_error = error_fn(pred, target, num_atoms)
@@ -221,7 +221,7 @@ def train(model: nn.Module,
 
 
     model.train()
-    grad_scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
+    grad_scaler = torch.amp.GradScaler('cuda', enabled=args.amp)
     epoch_start = load_state(model, args.load_ckpt_path, callbacks) if args.load_ckpt_path else 0
 
     for callback in callbacks:

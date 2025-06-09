@@ -173,6 +173,7 @@ class TrIPModel(TrIPTransformer):
                  cutoff: float,
                  coulomb_energy_unit: float,
                  si_tensor: Tensor = None,
+                 coulumb: bool = True,
                  **kwargs):
         self.num_degrees = num_degrees
         self.num_channels = num_channels
@@ -180,6 +181,7 @@ class TrIPModel(TrIPTransformer):
         self.cutoff = cutoff
         self.coulomb_energy_unit = coulomb_energy_unit
         self.si_tensor = si_tensor
+        self.coulumb = coulumb
 
         num_out_channels = num_channels * num_degrees
         super().__init__(   
@@ -221,9 +223,12 @@ class TrIPModel(TrIPTransformer):
 
         feats = super().forward(graph, node_feats, edge_feats, scale)
         cat_feats = torch.cat([species_embedding, feats], dim=1)
-        learned_energies = self.mlp(cat_feats).squeeze(-1)
-        coulomb_energies = self.screened_coulomb(graph, dist, scale)
-        atom_energies = learned_energies + coulomb_energies
+        atom_energies = self.mlp(cat_feats).squeeze(-1)
+
+        if self.coulumb:
+            coulomb_energies = self.screened_coulomb(graph, dist, scale)
+        atom_energies += atom_energies + coulomb_energies  # learned atom energies + screened Coulomb energies
+
         if standardized:
             return atom_energies
         
@@ -281,6 +286,9 @@ class TrIPModel(TrIPTransformer):
         parser.add_argument('--coulomb_energy_unit',
                             help='Value of e^2/(4*pi*e0) in preferred units, default is Ha*A',
                             type=float, default=0.529)  # e^2/(4*pi*e0) in Ha*A)
+        parser.add_argument('--coulomb',
+                            help='If true, will use semi-empirical method to explicitly determine screened Coulombic interactions',
+                            type=str2bool, nargs='?', const=True, default=True)
         TrIPTransformer.add_argparse_args(parser)
         return parser
 
