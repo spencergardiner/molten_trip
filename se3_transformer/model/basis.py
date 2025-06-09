@@ -23,7 +23,10 @@
 
 
 from functools import lru_cache
-from typing import Dict, List
+from typing import Dict, List, Tuple
+import math
+import numpy as np
+
 
 import e3nn.o3 as o3
 import torch
@@ -52,10 +55,96 @@ def get_all_clebsch_gordon(max_degree: int, device) -> List[List[Tensor]]:
     return all_cb
 
 
-def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> List[Tensor]:
+################################################
+# sped-up implementation of spherical harmonics
+###############################################
+@lru_cache
+def calc_klmc(deg: int, device: str='cpu', dtype=torch.float64) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    k = torch.arange(deg+1, device=device, dtype=dtype).unsqueeze(0)
+    lm_list = [[d, m] for d in range(deg+1) for m in range(-d, d+1)]
+    l, m = torch.tensor(lm_list, device=device).T.reshape([2,-1,1])
+    c = 2*k - l - m
+    return k, l, m, c
+
+@lru_cache
+def calc_A(deg: int, device: str='cpu', dtype=torch.float64) -> torch.tensor:
+    k, l, m, _ = calc_klmc(deg, device='cpu', dtype=torch.float64)  # Use cpu so np.vectorize works
+
+    # Vectorized factorial
+    fact_func = lambda n: float(math.gamma(abs(n+1))) if n >= 0 else torch.nan
+    fact_vect = np.vectorize(pyfunc=fact_func, otypes=[np.float64])
+
+    A = (-1.)**(m+l-k) / 2.**l \
+        / fact_vect(k) / fact_vect(l-k) \
+        *fact_vect(2*k) / fact_vect(2*k-l-m)
+    A = A.to(device, dtype=dtype)
+    A[torch.isnan(A)] = 0.
+    return A
+
+@lru_cache
+def calc_Bmc(l: int, device='cpu', dtype=torch.float64) -> torch.Tensor:
+    A = calc_A(l, device=device, dtype=dtype)
+    k, l, m, c = calc_klmc(l)
+
+    # Vectorized factorial
+    fact_func = lambda n: math.gamma(abs(n+1)) if n >= 0 else np.nan
+    fact_vect = np.vectorize(pyfunc=fact_func, otypes=[np.float64])
+
+    frac = torch.tensor(fact_vect(l-m)/fact_vect(l+m), device=device, dtype=dtype)
+    B = torch.sqrt(frac) * A
+    B[torch.isnan(B)] = 0.
+    return B.unsqueeze(0), m.to(device, dtype=dtype).T, c.to(device, dtype=dtype).unsqueeze(0)
+
+#@torch.jit.script # jit seems to be slower
+def calc_Ylm(deg: int, x: torch.Tensor) -> torch.Tensor:
+    # Retreive cahced thing
+    device = x.device
+    dtype = x.dtype
+    B, m, c = calc_Bmc(deg, device=device, dtype=dtype)
+
+    # Preliminary calculations
+    r = torch.norm(x, dim=1)
+    cos_theta = (x[...,2] / r).reshape(-1, 1, 1)
+    phi = torch.atan2(x[...,1], x[...,0]).unsqueeze(-1)
+
+    # Perform calculation
+    mphi = m * phi
+    real_part = torch.cos(mphi)
+    imag_part = torch.sin(mphi)
+    complex_exp = torch.complex(real_part, imag_part)
+
+    Ylm = torch.sum(B * cos_theta**c, dim=2) * torch.sin(phi)**(m/2) * complex_exp #torch.exp(1j*m*phi)
+    #Ylm = torch.einsum('ijk,ijk->ij', B, cos_theta**c) * torch.sin(phi)**(m/2) * complex_exp
+    return Ylm
+
+
+# def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> List[Tensor]:
+#     all_degrees = list(range(2 * max_degree + 1))
+#     sh = o3.spherical_harmonics(all_degrees, relative_pos, normalize=True)
+#     return torch.split(sh, [degree_to_dim(d) for d in all_degrees], dim=1)
+
+def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> list[Tensor]:
+    """
+    Instead of calling 
+        o3.spherical_harmonics([0,1,…,2*max_degree], relative_pos, normalize=True),
+    we now call calc_Ylm(2*max_degree, relative_pos) in one shot.  This returns
+      Tensor sh of shape [N, (2*max_degree + 1)**2],
+    whose columns are exactly ordered as
+      [Y_{0,0}, Y_{1,-1},Y_{1,0},Y_{1,1}, Y_{2,-2}, …, Y_{2*max_degree, 2*max_degree}].
+
+    We then split out the blocks of size (2d+1) for each d = 0..2*max_degree.
+    """
+    # 1) Build the list of degrees [0,1,2,…,2*max_degree]
     all_degrees = list(range(2 * max_degree + 1))
-    sh = o3.spherical_harmonics(all_degrees, relative_pos, normalize=True)
-    return torch.split(sh, [degree_to_dim(d) for d in all_degrees], dim=1)
+
+    # 2) Compute every Y_{l,m} for l = 0..(2*max_degree) in one go:
+    #    This returns an [N, (2M+1)^2] tensor.
+    sh = calc_Ylm(2 * max_degree, relative_pos)
+
+    # 3) Now split into sub‐tensors of width (2d+1) for d=0..2M:
+    dims = [degree_to_dim(d) for d in all_degrees]  # [1, 3, 5, 7, …, (4M+1)]
+    # torch.split will carve 'sh' along dim=1 into pieces of those sizes.
+    return list(torch.split(sh, dims, dim=1))
 
 
 @torch.jit.script
