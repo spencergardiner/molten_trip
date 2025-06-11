@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # CLI args with defaults
-BATCH_SIZE=${1:-25}
+BATCH_SIZE=${1:-8}
 AMP=${2:-true}
 NUM_EPOCHS=${3:-30}
 LEARNING_RATE=${4:-2e-3}
@@ -17,9 +17,11 @@ python -m trip.runtime.training \
   --weight_decay "$WEIGHT_DECAY" \
   --use_layer_norm \
   --norm \
-  --save_ckpt_path model_ani1x.pth \
+  --save_ckpt_path models/frontier_2_default.pth \
   --seed 42 \
   --gradient_clip 10.0 \
-  --wandb \
   --eval_interval 1 \
   --force_weight 0.1 \
+  --data_file datasets/processed_flibenak.h5 \
+  --dllogger_name frontier_2_default.json \
+  --log_dir logs/frontier_2_default \

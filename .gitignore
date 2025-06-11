@@ -1,2 +1,7 @@
 results/
 .vscode/
+models/
+logs/
+datasets/
+analysis/
+**/__pycache__/
