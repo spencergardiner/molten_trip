@@ -227,7 +227,7 @@ class TrIPModel(TrIPTransformer):
 
         if self.coulumb:
             coulomb_energies = self.screened_coulomb(graph, dist, scale)
-        atom_energies += atom_energies + coulomb_energies  # learned atom energies + screened Coulomb energies
+            atom_energies += atom_energies + coulomb_energies  # learned atom energies + screened Coulomb energies
 
         if standardized:
             return atom_energies
@@ -316,7 +316,7 @@ class TrIP(TrIPModel):
 
     def load_state(self, checkpoint, map_location='cuda:0'):
         if isinstance(checkpoint, pathlib.Path) or isinstance(checkpoint, str):
-            checkpoint = torch.load(str(checkpoint), map_location=map_location)
+            checkpoint = torch.load(str(checkpoint), map_location=map_location, weights_only=False)
         self.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.kwargs = deepcopy(checkpoint['kwargs'])
@@ -325,7 +325,7 @@ class TrIP(TrIPModel):
     @staticmethod
     def load(path: pathlib.Path, map_location='cuda:0'):
         """ Loads model, optimizer and epoch states from path """
-        checkpoint = torch.load(str(path), map_location=map_location)
+        checkpoint = torch.load(str(path), map_location=map_location, weights_only=False)
         kwargs = checkpoint['kwargs']
         model = TrIP(**kwargs)
         model.to(device=torch.cuda.current_device())

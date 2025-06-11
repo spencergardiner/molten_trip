@@ -184,7 +184,7 @@ class TrIPDataset(Dataset):
         :param pos_list:            List of tensors of positions (Shape: [N,3]).
         :param energy_list:         List of floats of system energies.
         :param forces_list:         List of tensors of forces (Shape: [N,3]).
-        :param boxsize_list:       If boxsize is not None then the graphs are constructed using periodic BC's using
+        :param boxsize_list:        If boxsize is not None then the graphs are constructed using periodic BC's using
                                     the values in boxsize (Shape: [1] or [3])
         """
 

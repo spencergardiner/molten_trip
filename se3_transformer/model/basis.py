@@ -118,33 +118,33 @@ def calc_Ylm(deg: int, x: torch.Tensor) -> torch.Tensor:
     return Ylm
 
 
-# def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> List[Tensor]:
-#     all_degrees = list(range(2 * max_degree + 1))
-#     sh = o3.spherical_harmonics(all_degrees, relative_pos, normalize=True)
-#     return torch.split(sh, [degree_to_dim(d) for d in all_degrees], dim=1)
-
-def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> list[Tensor]:
-    """
-    Instead of calling 
-        o3.spherical_harmonics([0,1,…,2*max_degree], relative_pos, normalize=True),
-    we now call calc_Ylm(2*max_degree, relative_pos) in one shot.  This returns
-      Tensor sh of shape [N, (2*max_degree + 1)**2],
-    whose columns are exactly ordered as
-      [Y_{0,0}, Y_{1,-1},Y_{1,0},Y_{1,1}, Y_{2,-2}, …, Y_{2*max_degree, 2*max_degree}].
-
-    We then split out the blocks of size (2d+1) for each d = 0..2*max_degree.
-    """
-    # 1) Build the list of degrees [0,1,2,…,2*max_degree]
+def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> List[Tensor]:
     all_degrees = list(range(2 * max_degree + 1))
+    sh = o3.spherical_harmonics(all_degrees, relative_pos, normalize=True)
+    return torch.split(sh, [degree_to_dim(d) for d in all_degrees], dim=1)
 
-    # 2) Compute every Y_{l,m} for l = 0..(2*max_degree) in one go:
-    #    This returns an [N, (2M+1)^2] tensor.
-    sh = calc_Ylm(2 * max_degree, relative_pos)
+# def get_spherical_harmonics(relative_pos: Tensor, max_degree: int) -> list[Tensor]:
+#     """
+#     Instead of calling 
+#         o3.spherical_harmonics([0,1,…,2*max_degree], relative_pos, normalize=True),
+#     we now call calc_Ylm(2*max_degree, relative_pos) in one shot.  This returns
+#       Tensor sh of shape [N, (2*max_degree + 1)**2],
+#     whose columns are exactly ordered as
+#       [Y_{0,0}, Y_{1,-1},Y_{1,0},Y_{1,1}, Y_{2,-2}, …, Y_{2*max_degree, 2*max_degree}].
 
-    # 3) Now split into sub‐tensors of width (2d+1) for d=0..2M:
-    dims = [degree_to_dim(d) for d in all_degrees]  # [1, 3, 5, 7, …, (4M+1)]
-    # torch.split will carve 'sh' along dim=1 into pieces of those sizes.
-    return list(torch.split(sh, dims, dim=1))
+#     We then split out the blocks of size (2d+1) for each d = 0..2*max_degree.
+#     """
+#     # 1) Build the list of degrees [0,1,2,…,2*max_degree]
+#     all_degrees = list(range(2 * max_degree + 1))
+
+#     # 2) Compute every Y_{l,m} for l = 0..(2*max_degree) in one go:
+#     #    This returns an [N, (2M+1)^2] tensor.
+#     sh = calc_Ylm(2 * max_degree, relative_pos)
+
+#     # 3) Now split into sub‐tensors of width (2d+1) for d=0..2M:
+#     dims = [degree_to_dim(d) for d in all_degrees]  # [1, 3, 5, 7, …, (4M+1)]
+#     # torch.split will carve 'sh' along dim=1 into pieces of those sizes.
+#     return list(torch.split(sh, dims, dim=1))
 
 
 @torch.jit.script

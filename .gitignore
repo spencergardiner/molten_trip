@@ -5,7 +5,8 @@ libhipcxx/
 .conda_env/
 apptainer_sandbox/
 build-temp*
-__pycache__
+**/__pycache__/
+**/.venv/
 core.*
 models/
 logs/

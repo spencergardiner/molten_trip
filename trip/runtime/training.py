@@ -119,6 +119,8 @@ def train_epoch(model, graph_constructor, add_atom_data, train_dataloader, error
     num_confs_acc = torch.zeros((1,), device=device)
     for i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), unit='batch',
                          desc=f'Epoch {epoch_idx}', disable=(args.silent or local_rank != 0)):
+        
+
         num_atoms = 0
         if args.add_atoms:
             batch, num_atoms = add_atom_data(*batch)
@@ -138,6 +140,31 @@ def train_epoch(model, graph_constructor, add_atom_data, train_dataloader, error
             energy_loss /= args.accumulate_grad_batches
             forces_loss /= args.accumulate_grad_batches
             loss = energy_loss + args.force_weight*forces_loss
+            
+
+        # # check if there are NaNs in the outputs
+        pred_energy, pred_forces = pred
+        # if epoch_idx > 3 and torch.isnan(pred_forces).any():
+        #     print("Batch contents:")
+        #     print("\n\nspecies shape:", species.shape)
+        #     print("species:", species)
+        #     print("\npos_list shape:", [p.shape for p in pos_list])
+        #     # print("pos_list:", pos_list)
+        #     print("\n\ntarget energy shape:", energy.shape)
+        #     print("target energy:", energy)
+        #     print("\n\npred energy shape:", pred[0].shape)
+        #     print("pred energy:", pred[0])
+        #     print("\n\nforces shape:", forces.shape)
+        #     print("forces:", forces)
+        #     print("\n\npred forces shape:", pred[1].shape)
+        #     print("pred forces:", pred[1])
+            
+            # # print the indexes of the atoms with NaN forces
+            # nan_forces = torch.isnan(pred_forces)
+            # if nan_forces.any():
+            #     print("NaN forces found at indexes:", torch.nonzero(nan_forces, as_tuple=True)[0].tolist())
+            # raise ValueError("NaN values found in the predicted energy")
+
             
         energy_loss_acc += energy_loss.detach()
         forces_loss_acc += forces_loss.detach()
@@ -263,7 +290,6 @@ def train(model: nn.Module,
 
 
 
-
 @record
 def main():
     """ Main function for training TrIP """
@@ -291,7 +317,6 @@ def main():
     logging.info(f'Dataset energy std: {energy_std:.5f}')
     print(datamodule.ds_train.__len__(), 'train samples')
     print(datamodule.ds_val.__len__(), 'validation samples')
-
 
 
     model = TrIP(
