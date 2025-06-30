@@ -21,6 +21,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES
 # SPDX-License-Identifier: MIT
 
+import os
 import logging
 import pathlib
 from typing import List, Callable
@@ -67,20 +68,30 @@ def save_state(model: nn.Module, epoch: int, path: pathlib.Path, callbacks: List
         logging.info(f'Saved checkpoint to {str(path)}')
 
 
-def load_state(model: nn.Module, path: pathlib.Path, callbacks: List[BaseCallback]):
+def load_state(model: nn.Module, path: pathlib.Path, optimizer, callbacks: List[BaseCallback], weights_only: bool = False):
     map_location = {'cuda:0': f'cuda:{get_local_rank()}'}
     trip_model = model.module if isinstance(model, DistributedDataParallel) else model
-    checkpoint = trip_model.load_state(path, map_location)
+    checkpoint = trip_model.load_state(path, map_location, weights_only=weights_only)
+    epoch_start = 0 # do not want to preserve epoch from checkpoint if loading weights only
 
-    for callback in callbacks:
-        callback.on_checkpoint_load(checkpoint)
+    if not weights_only:
+        epoch_start = checkpoint['epoch'] + 1 # start on the epoch after the last checkpointed epoch
+
+        for callback in callbacks:
+            callback.on_checkpoint_load(checkpoint)  # load scheduler state
+
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        for i, param_group in enumerate(optimizer.param_groups):  # set LR to last checkpointed LR
+            param_group['lr'] = checkpoint['scheduler_state_dict']['_last_lr'][i]
 
     logging.info(f'Loaded checkpoint from {str(path)}')
-    return checkpoint['epoch']
+    return epoch_start, optimizer
 
 
 def train_epoch(model, graph_constructor, add_atom_data, train_dataloader, error_fn, loss_fn,
                 epoch_idx, grad_scaler, optimizer, local_rank, callbacks, args):
+    logging.info("Learning rate for epoch %d: %f", epoch_idx, optimizer.param_groups[0]['lr'])
+
     # TODO: Find a cleaner way to deal with accumulation variables
     energy_loss_acc = torch.zeros((1,), device='cuda')
     forces_loss_acc = torch.zeros((1,), device='cuda')
@@ -101,8 +112,7 @@ def train_epoch(model, graph_constructor, add_atom_data, train_dataloader, error
         for callback in callbacks:
             callback.on_batch_start()
 
-        # with torch.cuda.amp.autocast(enabled=args.amp):
-        with torch.amp.autocast('cuda', enabled=args.amp):
+        with torch.amp.autocast('cuda', enabled=(args.amp and not args.amd)):  # autocasting on Frontier --> lots of NaNs
             pred = model(graph, create_graph=True, standardized=True)
             energy_loss, forces_loss = loss_fn(pred, target)
             energy_error, forces_error = error_fn(pred, target, num_atoms)
@@ -184,17 +194,20 @@ def train(model: nn.Module,
     local_rank = get_local_rank()
     world_size = dist.get_world_size() if dist.is_initialized() else 1
 
+    for callback in callbacks:
+        callback.on_fit_start(optimizer, args)  # se3 TripLRSchedulerCallback sets scheduler= new instance of ExponentialLR(optimizer, gamma)
+
     if dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
         model._set_static_graph()
 
     model.train()
-    # grad_scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
-    grad_scaler = torch.amp.GradScaler('cuda', enabled=args.amp)
-    epoch_start = load_state(model, args.load_ckpt_path, callbacks) if args.load_ckpt_path else 0
+    grad_scaler = torch.amp.GradScaler('cuda', enabled=(args.amp and not args.amd))
 
-    for callback in callbacks:
-        callback.on_fit_start(optimizer, args)
+    epoch_start = 0
+    if args.load_ckpt_path and os.path.exists(args.load_ckpt_path):
+        epoch_start, optimizer = load_state(model, args.load_ckpt_path, optimizer, callbacks, args.load_weights_only)
+
 
     for epoch_idx in range(epoch_start, args.epochs):
         if isinstance(train_dataloader.sampler, DistributedSampler):
@@ -234,6 +247,8 @@ if __name__ == '__main__':
     is_distributed = init_distributed()
     local_rank = get_local_rank()
     args = PARSER.parse_args()
+
+    torch.autograd.set_detect_anomaly(True)
 
     logging.getLogger().setLevel(logging.CRITICAL if local_rank != 0 or args.silent else logging.INFO)
 
@@ -275,12 +290,19 @@ if __name__ == '__main__':
                      TrIPMetricCallback(logger, targets_std=energy_std, prefix='forces validation'),
                      TrIPLRSchedulerCallback(logger)]
 
-    # if is_distributed:
-    #     gpu_affinity.set_affinity(gpu_id=get_local_rank(), nproc_per_node=torch.cuda.device_count())
+    if not args.amd:
+        increase_l2_fetch_granularity()
+        if is_distributed:
+            gpu_affinity.set_affinity(gpu_id=get_local_rank(), nproc_per_node=torch.cuda.device_count())
 
     print_parameters_count(model)
     logger.log_hyperparams(vars(args))
-    # increase_l2_fetch_granularity()
+
+    # overwrite checkpoint path if it doesnt exist
+    if args.load_ckpt_path is not None and not os.path.exists(args.load_ckpt_path):
+        logging.warning(f'Checkpoint path {args.load_ckpt_path} does not exist, ignoring loading')
+        args.load_ckpt_path = None
+
     train(model,
           optimizer,
           graph_constructor,

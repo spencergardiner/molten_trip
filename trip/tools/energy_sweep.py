@@ -16,7 +16,8 @@ class SE3Module(torch.nn.Module):
     def __init__(self, trained_model):
         super(SE3Module, self).__init__()
         self.model = trained_model
-        self.species_dict = {'H': 1, 'C': 6, 'N': 7, 'O': 8}
+        # self.species_dict = {'H': 1, 'C': 6, 'N': 7, 'O': 8}
+        self.species_dict = {'Li':3, 'F': 9}
         self.graph_constructor = GraphConstructor(trained_model.cutoff)
 
     def forward(self, species, positions, forces=True):
@@ -31,8 +32,10 @@ class SE3Module(torch.nn.Module):
             energy = self.model(graph, forces=forces, create_graph=False)
             return energy.item()
 
-symbols = ['H','C','N','O']
-elements = ['Hydrogen','Carbon','Nitrogen','Oxygen']
+# symbols = ['H','C','N','O']
+# elements = ['Hydrogen','Carbon','Nitrogen','Oxygen']
+symbols = ['Li', 'F']
+elements = ['Lithium', 'Fluorine']
 for symbol, name in zip(symbols, elements):
     species = [symbol, symbol]
     sm = SE3Module(model)

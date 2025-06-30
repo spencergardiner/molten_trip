@@ -42,6 +42,9 @@ paths.add_argument('--save_ckpt_path', type=pathlib.Path, default=None,
 paths.add_argument('--load_ckpt_path', type=pathlib.Path, default=None,
                    help='File of the checkpoint to be loaded')
 
+PARSER.add_argument('--load_weights_only', type=str2bool, nargs='?', const=True, default=False,
+                    help='Load only the weights from the checkpoint, ignore scheduler and optimizer states.')
+
 PARSER.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
 PARSER.add_argument('--batch_size', type=int, default=240, help='Batch size')
 PARSER.add_argument('--seed', type=int, default=None, help='Set a seed globally')
@@ -59,9 +62,10 @@ PARSER.add_argument('--silent', type=str2bool, nargs='?', const=True, default=Fa
                     help='Minimize stdout output')
 PARSER.add_argument('--wandb', type=str2bool, nargs='?', const=True, default=False,
                     help='Enable W&B logging')
-
 PARSER.add_argument('--benchmark', type=str2bool, nargs='?', const=True, default=False,
                     help='Benchmark mode')
+PARSER.add_argument('--amd', type=str2bool, nargs='?', const=True, default=False,
+                    help="Run with AMD GPU's (also turns off amp). NOTE: must manually change dgl.copy_edge() --> dgl.copy_e() for updated DGL versions.")
 
 TrIP.add_argparse_args(PARSER)
 TrIPDataModule.add_argparse_args(PARSER)

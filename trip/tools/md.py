@@ -53,7 +53,7 @@ def get_system(topo, trip_force):
 def get_simulation(topo, system, pos, temp, dt, out, **args):
     integrator = LangevinIntegrator(temp*kelvin, 1/picosecond, dt*femtosecond)
     simulation = Simulation(topo, system, integrator)
-    simulation.context.setPositions(pos.tolist() * angstrom)
+    simulation.context.setPositions(pos)
     simulation.context.setVelocitiesToTemperature(temp * kelvin)
     simulation.reporters.append(DCDReporter(os.path.join(out, 'trajectory.dcd'), 1))
     simulation.reporters.append(StateDataReporter(stdout, 1, step=True, temperature=True,

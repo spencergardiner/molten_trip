@@ -5,3 +5,4 @@ logs/
 datasets/
 analysis/
 **/__pycache__/
+system-tests/

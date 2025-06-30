@@ -45,7 +45,7 @@ def evaluate(model: nn.Module,
              dataloader: DataLoader,
              callbacks: List[BaseCallback],
              args):
-    for _, batch in tqdm(enumerate(dataloader), total=len(dataloader), unit='batch', desc=f'Evaluation',
+    for i, batch in tqdm(enumerate(dataloader), total=len(dataloader), unit='batch', desc=f'Evaluation',
                          leave=False, disable=(args.silent or get_local_rank() != 0)):
         species, pos_list, energy, forces, boxsize = to_cuda(batch)
         target = energy, forces
@@ -55,7 +55,7 @@ def evaluate(model: nn.Module,
         for callback in callbacks:
             callback.on_batch_start()
 
-        with torch.cuda.amp.autocast(enabled=args.amp):
+        with torch.amp.autocast('cuda', enabled=(args.amp and not args.amd)):
             pred = model(graph, create_graph=False, standardized=True)
 
             for callback in callbacks:

@@ -29,6 +29,7 @@ from torch import Tensor
 from torch.nn import init
 from torch.cuda.nvtx import range as nvtx_range
 from torch.nn.parameter import Parameter
+import torch.nn.functional as F
 
 from se3_transformer.model import Fiber
 
@@ -44,6 +45,7 @@ class TrIPNorm(nn.Module):
     """
 
     NORM_CLAMP = 2 ** -12  # Minimum positive subnormal for FP16  # TRIP
+    NORM_EPS = NORM_CLAMP ** 2  # Minimum positive subnormal for FP16 squared
 
     def __init__(self, fiber: Fiber, nonlinearity: nn.Module = lambda x : x):
         super().__init__()
@@ -64,9 +66,21 @@ class TrIPNorm(nn.Module):
         with nvtx_range('TrIPNorm'):
             output = {}
             if hasattr(self, 'group_norm'):
+                # original code
                 # Compute per-degree norms of features
-                norms = [features[str(d)].norm(dim=-1, keepdim=True).clamp(min=self.NORM_CLAMP)
-                         for d in self.fiber.degrees]
+
+                norms = []
+                for d in self.fiber.degrees:
+                    tensor = features[str(d)]
+                    tensor = torch.add(tensor, self.NORM_CLAMP)  # Avoid NaNs
+                    tensor = tensor.norm(dim=-1, keepdim=True)  # Compute norm
+                    tensor = tensor.clamp(min=self.NORM_CLAMP)  # Clamp to avoid division by zero
+                    norms.append(tensor)
+
+                # norms = [torch.add(features[str(d)], self.NORM_CLAMP).norm(dim=-1, keepdim=True).clamp(min=self.NORM_CLAMP)
+                #          for d in self.fiber.degrees]
+
+                # original code
                 fused_norms = torch.cat(norms, dim=-1)
                 new_norms = self.nonlinearity(self.group_norm(fused_norms))
                 factor = new_norms / fused_norms
@@ -78,6 +92,41 @@ class TrIPNorm(nn.Module):
                     new_norm = self.nonlinearity(self.layer_norms[degree](norm))
                     output[degree] = feat * (new_norm / norm).unsqueeze(-1)
             return output
+
+
+
+    # def forward(self, features: Dict[str, Tensor], *args, **kwargs) -> Dict[str, Tensor]:
+    #     with nvtx_range('TrIPNorm'):
+    #         output = {}
+
+    #         eps = self.NORM_CLAMP**2   # if clamp was e.g. 1e‑8, this is 1e‑16
+
+    #         if hasattr(self, 'group_norm'):
+    #             # build a list of “safe” norms
+    #             safe_norms = []
+    #             for d in self.fiber.degrees:
+    #                 fv = features[str(d)]
+    #                 r2 = (fv * fv).sum(dim=-1, keepdim=True)
+    #                 safe_norms.append(torch.sqrt(r2 + eps))
+    #             fused_norms = torch.cat(safe_norms, dim=-1)
+
+    #             new_norms = self.nonlinearity(self.group_norm(fused_norms))
+    #             factor = new_norms / fused_norms
+
+    #             for i, d in enumerate(self.fiber.degrees):
+    #                 output[str(d)] = features[str(d)] * factor[..., i].unsqueeze(-1)
+
+    #         else:
+    #             for degree, feat in features.items():
+    #                 # compute a per-feature “safe” norm
+    #                 r2 = (feat * feat).sum(dim=-1, keepdim=True)
+    #                 norm = torch.sqrt(r2 + eps)
+
+    #                 new_norm = self.nonlinearity(self.layer_norms[degree](norm))
+    #                 output[degree] = feat * (new_norm / norm).unsqueeze(-1)
+
+    #         return output
+
 
 class TrIPLayerNorm(nn.Module):
     def __init__(self, num_channels, elementwise_affine=True, device=None, dtype=None):

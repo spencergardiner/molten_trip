@@ -199,15 +199,18 @@ class TrIPModel(TrIPTransformer):
         )
         self.pool = SumPooling()
 
-    def forward(self, graph, forces=True, create_graph=False, standardized=False):
+    def forward(self, graph, forces=True, create_graph=False, standardized=False,):
         atom_energies = self.forward_atom_energies(graph, standardized)
         energies = self.pool(graph, atom_energies)
+
         if not forces:
             return energies
+    
         forces = -torch.autograd.grad(torch.sum(energies),
-                                      graph.ndata['pos'],
-                                      create_graph=create_graph,
-                                      )[0]
+                                graph.ndata['pos'],
+                                create_graph=create_graph,
+                                )[0]
+
         return energies, forces
 
     def forward_atom_energies(self, graph, standardized):
@@ -232,6 +235,16 @@ class TrIPModel(TrIPTransformer):
         species = graph.ndata['species']
         atom_energies = atom_energies + self.si_tensor[(species-1).tolist()]  # -1 so H starts at 0
         return atom_energies
+
+    def forward_coulomb(self, graph):
+        """
+        Computes the screened Coulomb energy for each atom in the graph.
+        :param graph: DGLGraph with 'species' and 'rel_pos' edge data
+        :return: Tensor of screened Coulomb energies for each atom
+        """
+        dist = torch.norm(graph.edata['rel_pos'], p=2, dim=1)
+        scale = self.scale_fn(dist, self.cutoff)
+        return self.screened_coulomb(graph, dist, scale)
 
     @staticmethod
     def scale_fn(dist, cutoff):
@@ -306,18 +319,21 @@ class TrIP(TrIPModel):
         }
         return checkpoint
 
-    def load_state(self, checkpoint, map_location='cuda:0'):
+    def load_state(self, checkpoint, map_location='cuda:0', weights_only=False):
         if isinstance(checkpoint, pathlib.Path) or isinstance(checkpoint, str):
-            checkpoint = torch.load(str(checkpoint), map_location=map_location)
-        self.load_state_dict(checkpoint['state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            torch.serialization.add_safe_globals([pathlib.PosixPath])
+            checkpoint = torch.load(str(checkpoint), map_location=map_location,  weights_only=weights_only)
+        
+        self.load_state_dict(checkpoint['state_dict']) # weights_only set to False by default
+        # not bothering to load optimizer state dict b/c self.optimizer isnt actually used for training
         self.kwargs = deepcopy(checkpoint['kwargs'])
         return checkpoint
 
     @staticmethod
-    def load(path: pathlib.Path, map_location='cuda:0'):
+    def load(path: pathlib.Path, map_location='cuda:0', weights_only=True):
         """ Loads model, optimizer and epoch states from path """
-        checkpoint = torch.load(str(path), map_location=map_location)
+        torch.serialization.add_safe_globals([pathlib.PosixPath])
+        checkpoint = torch.load(str(path), map_location=map_location, weights_only=weights_only)
         kwargs = checkpoint['kwargs']
         model = TrIP(**kwargs)
         model.to(device=torch.cuda.current_device())
@@ -351,7 +367,8 @@ class TrIP(TrIPModel):
                 decay.append(param)
         return [
             {'params': no_decay, 'weight_decay': 0.},
-            {'params': decay, 'weight_decay': weight_decay}]
+            {'params': decay, 'weight_decay': weight_decay}
+        ]
 
     @staticmethod
     def loss_fn(pred, target, beta=2e-1):  # Uses Pseudo Huber Loss
