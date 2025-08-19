@@ -67,5 +67,20 @@ PARSER.add_argument('--benchmark', type=str2bool, nargs='?', const=True, default
 PARSER.add_argument('--amd', type=str2bool, nargs='?', const=True, default=False,
                     help="Run with AMD GPU's (also turns off amp). NOTE: must manually change dgl.copy_edge() --> dgl.copy_e() for updated DGL versions.")
 
+PARSER.add_argument('--r2_lr', type=float, default=1e-5,
+                    help='Initial learning rate for round 2 loss')
+PARSER.add_argument('--r2_gamma', type=float, default=0.97,
+                    help='Learning rate decay factor for round 2 loss')
+PARSER.add_argument('--r2_fw', type=float, default=0.1,
+                    help='scaling factor for the force component in the round 2 loss')
+PARSER.add_argument('--r2_epoch_start', type=int, default=-1,
+                    help='Epoch to start the round 2 loss (default: -1, which means to not initiate round 2 training). \
+                        NOTE: "_r2" will be appended to the model name if this is set to a value >= 0.')
+PARSER.add_argument('--r2_base_model_ckpt_path', default=None, type=pathlib.Path, nargs='?',
+                    const=None,
+                    help='Path to the base model checkpoint to be used for round 2 training. \
+                        If not set, the model will be trained from scratch. \
+                        NOTE: this should be a model trained with --r2_epoch_start=-1.')
+
 TrIP.add_argparse_args(PARSER)
 TrIPDataModule.add_argparse_args(PARSER)

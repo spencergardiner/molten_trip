@@ -3,6 +3,7 @@ import os
 from openmm import *
 from openmm.app import *
 from openmm.unit import *
+import torch
 
 
 def get_species(symbols):
@@ -13,5 +14,7 @@ def get_species(symbols):
 
 def save_pdb(pos, topo, name, out, **args):
     with open(os.path.join(out, name+'.pdb'), 'w') as f:
+        if isinstance(pos, torch.Tensor):
+            pos = pos.cpu()
         pdbfile.PDBFile.writeFile(topo, pos, f)
         

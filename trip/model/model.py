@@ -199,18 +199,15 @@ class TrIPModel(TrIPTransformer):
         )
         self.pool = SumPooling()
 
-    def forward(self, graph, forces=True, create_graph=False, standardized=False,):
+    def forward(self, graph, forces=True, create_graph=False, standardized=False):
         atom_energies = self.forward_atom_energies(graph, standardized)
         energies = self.pool(graph, atom_energies)
-
         if not forces:
             return energies
-    
         forces = -torch.autograd.grad(torch.sum(energies),
-                                graph.ndata['pos'],
-                                create_graph=create_graph,
-                                )[0]
-
+                                      graph.ndata['pos'],
+                                      create_graph=create_graph,
+                                      )[0]
         return energies, forces
 
     def forward_atom_energies(self, graph, standardized):
@@ -235,16 +232,6 @@ class TrIPModel(TrIPTransformer):
         species = graph.ndata['species']
         atom_energies = atom_energies + self.si_tensor[(species-1).tolist()]  # -1 so H starts at 0
         return atom_energies
-
-    def forward_coulomb(self, graph):
-        """
-        Computes the screened Coulomb energy for each atom in the graph.
-        :param graph: DGLGraph with 'species' and 'rel_pos' edge data
-        :return: Tensor of screened Coulomb energies for each atom
-        """
-        dist = torch.norm(graph.edata['rel_pos'], p=2, dim=1)
-        scale = self.scale_fn(dist, self.cutoff)
-        return self.screened_coulomb(graph, dist, scale)
 
     @staticmethod
     def scale_fn(dist, cutoff):
@@ -302,7 +289,15 @@ class TrIP(TrIPModel):
     def __init__(self,
                 **kwargs):
         super().__init__(**kwargs)
-        self.optimizer = TrIP.make_optimizer(self, **kwargs)
+        optimizer_type= kwargs['optimizer_type'] if 'optimizer_type' in kwargs else 'adam'
+        learning_rate = kwargs['learning_rate'] if 'learning_rate' in kwargs else 0
+        momentum = kwargs['momentum'] if 'momentum' in kwargs else 0.9
+        weight_decay = kwargs['weight_decay'] if 'weight_decay' in kwargs else 0
+        self.optimizer = TrIP.make_optimizer(self,
+                                             optimizer_type=optimizer_type,
+                                             learning_rate=learning_rate,
+                                             momentum=momentum,
+                                             weight_decay=weight_decay)
         self.kwargs = deepcopy(kwargs)
 
     def save(self, path: pathlib.Path, epoch: int):
@@ -320,17 +315,17 @@ class TrIP(TrIPModel):
         return checkpoint
 
     def load_state(self, checkpoint, map_location='cuda:0', weights_only=False):
+        torch.serialization.add_safe_globals([pathlib.PosixPath])
+
         if isinstance(checkpoint, pathlib.Path) or isinstance(checkpoint, str):
-            torch.serialization.add_safe_globals([pathlib.PosixPath])
-            checkpoint = torch.load(str(checkpoint), map_location=map_location,  weights_only=weights_only)
-        
-        self.load_state_dict(checkpoint['state_dict']) # weights_only set to False by default
-        # not bothering to load optimizer state dict b/c self.optimizer isnt actually used for training
+            checkpoint = torch.load(str(checkpoint), map_location=map_location, weights_only=weights_only)
+        self.load_state_dict(checkpoint['state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.kwargs = deepcopy(checkpoint['kwargs'])
         return checkpoint
 
     @staticmethod
-    def load(path: pathlib.Path, map_location='cuda:0', weights_only=True):
+    def load(path: pathlib.Path, map_location='cuda:0', weights_only=False):
         """ Loads model, optimizer and epoch states from path """
         torch.serialization.add_safe_globals([pathlib.PosixPath])
         checkpoint = torch.load(str(path), map_location=map_location, weights_only=weights_only)
@@ -343,12 +338,39 @@ class TrIP(TrIPModel):
     @staticmethod
     def make_optimizer(model, optimizer_type, learning_rate, momentum, weight_decay, **kwargs):
         parameters = TrIP.add_weight_decay(model, weight_decay, skip_list=['embedding.weight', 'mlp.4.weight'])
+# <<<<<<< HEAD
+
+#         ##############
+#         # NVIDIA Code
+#         ##############
+#         # if optimizer_type == 'adam':
+#         #     return FusedAdam(parameters, lr=learning_rate, betas=(momentum, 0.999),
+#         #                      weight_decay=weight_decay)
+#         # elif optimizer_type == 'lamb':
+#         #     return FusedLAMB(parameters, lr=learning_rate, betas=(momentum, 0.999),
+#         #                      weight_decay=weight_decay)
+
+#         ##############
+#         # PyTorch Code -- AMD compatible
+#         ##############
+        # print all args
+   
         if optimizer_type == 'adam':
-            return FusedAdam(parameters, lr=learning_rate, betas=(momentum, 0.999),
-                             weight_decay=weight_decay)
+            return torch.optim.Adam(parameters, lr=learning_rate, betas=(momentum, 0.999),
+                            weight_decay=weight_decay)
         elif optimizer_type == 'lamb':
-            return FusedLAMB(parameters, lr=learning_rate, betas=(momentum, 0.999),
-                             weight_decay=weight_decay)
+            # There is no direct LAMB implementation in PyTorch, consider using AdamW instead
+            return torch.optim.AdamW(parameters, lr=learning_rate, betas=(momentum, 0.999),
+                            weight_decay=weight_decay)
+
+# # =======
+#         if optimizer_type == 'adam':
+#             return FusedAdam(parameters, lr=learning_rate, betas=(momentum, 0.999),
+#                              weight_decay=weight_decay)
+#         elif optimizer_type == 'lamb':
+#             return FusedLAMB(parameters, lr=learning_rate, betas=(momentum, 0.999),
+#                              weight_decay=weight_decay)
+# # >>>>>>> 451aab6f95e92b9edc6a198d9aa82af29f5b938e
         else:
             return torch.optim.SGD(parameters, lr=learning_rate, momentum=momentum,
                                    weight_decay=weight_decay)
@@ -367,8 +389,7 @@ class TrIP(TrIPModel):
                 decay.append(param)
         return [
             {'params': no_decay, 'weight_decay': 0.},
-            {'params': decay, 'weight_decay': weight_decay}
-        ]
+            {'params': decay, 'weight_decay': weight_decay}]
 
     @staticmethod
     def loss_fn(pred, target, beta=2e-1):  # Uses Pseudo Huber Loss
