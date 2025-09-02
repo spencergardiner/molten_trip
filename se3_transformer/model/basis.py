@@ -23,15 +23,61 @@
 
 
 from functools import lru_cache
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import e3nn.o3 as o3
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch.cuda.nvtx import range as nvtx_range
+from torch.cuda.nvtx import range_push, range_pop
+from torch.jit import ignore
+
 
 from se3_transformer.runtime.utils import degree_to_dim
+
+@ignore
+def _nvtx_push(msg: str):
+    # Eager-only; ignored in TorchScript
+    range_push(msg)
+
+
+@ignore
+def _nvtx_pop():
+    # Eager-only; ignored in TorchScript
+    range_pop()
+
+
+class NVTXRange:
+    """Lightweight context manager for NVTX ranges; script-safe.
+
+    NVTX CUDA APIs are wrapped in @torch.jit.ignore helpers so they are
+    skipped entirely when scripting.
+    """
+    __slots__ = ("msg", "active")
+
+    def __init__(self, msg: str):
+        self.msg = msg
+        self.active = False
+
+    def __enter__(self):
+        if not torch.jit.is_scripting():  # constant-folded during scripting
+            _nvtx_push(self.msg)
+            self.active = True
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any):
+        if self.active:
+            _nvtx_pop()
+        return False  # don't suppress exceptions
+
+
+def nvtx_range(msg: str) -> NVTXRange:
+    """Factory returning an NVTXRange context manager.
+
+    Usage: with nvtx_range("label"): ...
+    """
+    return NVTXRange(msg)
+
 
 
 @lru_cache(maxsize=None)
@@ -166,7 +212,6 @@ def get_basis(relative_pos: Tensor,
         spherical_harmonics = get_spherical_harmonics(relative_pos, max_degree)
     with nvtx_range('CB coefficients'):
         clebsch_gordon = get_all_clebsch_gordon(max_degree, relative_pos.device)
-
     with torch.autograd.set_grad_enabled(compute_gradients):
         with nvtx_range('bases'):
             basis = get_basis_script(max_degree=max_degree,
@@ -174,4 +219,4 @@ def get_basis(relative_pos: Tensor,
                                      spherical_harmonics=spherical_harmonics,
                                      clebsch_gordon=clebsch_gordon,
                                      amp=amp)
-            return basis
+        return basis

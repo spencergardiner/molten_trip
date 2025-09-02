@@ -1,39 +1,38 @@
 #!/bin/bash
-# run_flibenak_sim.sh
+# run_flibenak_sim_pbc.sh - Uses proper PBC handling
 
 # ----------- CONFIGURATION -------------
-TEMPERATURE=1029         # in Kelvin
-TORCH_GPU_INDEX=1
+TEMPERATURE=1019          # in Kelvin
+TORCH_GPU_INDEX=0
 DT=0.1                       # time step in femtoseconds
-SIM_TIME=.02                  # total simulation time in nanoseconds
+SIM_TIME=1                  # total simulation time in nanoseconds
 MINIMIZE=true
-NPT=true
-FRICTION=1.0     # friction coefficient in 1/picoseconds
 BASE_OUTPUT_DIR="./md_simulations"
-TRIP_MODEL_FILE="./models/model_fw10_80epochs/model_fw10_80epochs.pth"
+TRIP_MODEL_FILE="./models/400k_3layers_fw_10/400k_3layers_fw_10.pth"
 MINIMIZED_NAME="minimized"
 TRAJECTORY_NAME="trajectory"
 # ---------------------------------------
 
-OUTPUT_DIR="${BASE_OUTPUT_DIR}/eutectic_flinak_${TEMPERATURE}K"
+OUTPUT_DIR="${BASE_OUTPUT_DIR}/eutectic_flinak_${TEMPERATURE}K_pbc"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_LOG="${OUTPUT_DIR}/run.log"
 
 # Construct Python command
-CMD="python -m trip.tools.flinak_md_og \
+CMD="python -m trip.tools.flinak_md_pbc \
   --temp $TEMPERATURE \
   --gpu $TORCH_GPU_INDEX \
   --dt $DT \
   --t $SIM_TIME \
   --out $OUTPUT_DIR \
   --model_file $TRIP_MODEL_FILE \
-  --minimize $MINIMIZE \
-  --npt $NPT \
-  --friction $FRICTION \
 "
 
+# Add minimization flag
+if [ "$MINIMIZE" = true ]; then
+  CMD+=" --minimize"
+fi
 
 # Print and run the command
 echo "Running command:"
 echo $CMD
-eval $CMD | tee -a $OUTPUT_LOG
+eval $CMD | tee $OUTPUT_LOG

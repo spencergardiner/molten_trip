@@ -14,10 +14,11 @@ from openmm.unit import femtosecond, kelvin, kilocalorie_per_mole, nanometer, an
 from trip.tools.generate_flibenak_structures import create_pdb_box
 from trip.tools.utils import get_species, save_pdb
 from trip.tools.module import TrIPModule
+from trip.tools.trip_custom_force import TrIPMLForce, get_system_with_ml_force
 from openmm.unit import hartree, angstrom, kilocalorie_per_mole, nanometer, kilojoule_per_mole
 from se3_transformer.runtime.utils import str2bool
 
-torch.serialization.add_safe_globals([slice])
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='run md simulations using TrIP')
@@ -26,29 +27,40 @@ def parse_args():
     parser.add_argument('--model_file', type=str, default='/results/trip_vanilla.pth',
                         help='Path to model file, default=/results/trip_vanilla.pth')
     parser.add_argument('--minimize', type=str2bool, nargs='?', const=True, default=True,
-                            help='Whether to minimize the structure')
-    parser.add_argument('--npt', type=str2bool, nargs='?', const=True, default=True,
-                            help='Whether to use NPT ensemble')
+                        help='Whether to minimize the structure')
     parser.add_argument('--dt', type=float, default=0.5,
                         help='Step size in femtoseconds')
     parser.add_argument('--t', type=float, default=1.,
                         help='Simulation time in nanoseconds')
-    parser.add_argument('--friction', type=float, default=1.,
-                        help='Friction coefficient in 1/picosecond')
     parser.add_argument('--temp', type=float, default=298.,
                         help='Temperature in kelvin')
     parser.add_argument('--gpu', type=int, default=0, help='Which GPU to use, default=0')
-    parser.add_argument('--interval', type=int, default=25, help='Checkpoint interval, default=25')
     args = parser.parse_args()
     return args
 
-def get_trip_force():
-    trip_force = CustomExternalForce('c-fx*x-fy*y-fz*z')
-    trip_force.addPerParticleParameter('c')  # Correction term to get correct energy
-    trip_force.addPerParticleParameter('fx')
-    trip_force.addPerParticleParameter('fy')
-    trip_force.addPerParticleParameter('fz')
-    return trip_force
+def get_simulation_with_ml_force(topo, trip_module, species, pos, temp, dt, out, gpu, **args):
+    """
+    Create simulation using the custom ML force implementation.
+    This replaces both get_trip_force, get_system, and get_simulation functions.
+    """
+    # Create system with ML force
+    system, ml_force_handler = get_system_with_ml_force(topo, trip_module, species, f'cuda:{gpu}')
+    
+    # Create integrator and simulation
+    integrator = VerletIntegrator(dt*femtosecond)
+    platform = Platform.getPlatformByName('HIP')
+    simulation = Simulation(topo, system, integrator, platform, {'DeviceIndex': str(gpu)})
+    
+    # Set initial conditions
+    simulation.context.setPositions(pos.tolist() * angstrom)
+    simulation.context.setVelocitiesToTemperature(temp * kelvin)
+    
+    # Add reporters
+    simulation.reporters.append(DCDReporter(os.path.join(out, 'trajectory.dcd'), 1, enforcePeriodicBox=True))
+    simulation.reporters.append(StateDataReporter(stdout, 1, step=True, temperature=True,
+                                                  potentialEnergy=True, totalEnergy=True, density=True))
+    
+    return simulation, ml_force_handler
 
 
 
@@ -59,60 +71,21 @@ def get_system(topo, trip_force):
         system.addParticle(atom.element.mass)
     system.addForce(trip_force)
     for index, atom in enumerate(topo.atoms()):
-        # trip_force.addParticle(index, (0, 0, 0, 0) * kilocalorie_per_mole/angstrom)
-        trip_force.addParticle(index, (0.0, 0.0, 0.0, 0.0) * kilojoule_per_mole / nanometer)
-    
-    nb = NonbondedForce()
-    nb.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
-    nb.setCutoffDistance(1.0 * angstrom)
-    charge = 0.0               # zero charge → no Coulomb
-    sigma = 1.0 * angstrom    # arbitrary σ
-    epsilon = 0.0    
-        
-    system.addForce(nb)
-    for _ in range(system.getNumParticles()):
-        nb.addParticle(charge, sigma, epsilon)
+        trip_force.addParticle(index, (0, 0, 0, 0) * kilocalorie_per_mole/angstrom)
 
     return system
     
-def get_simulation(topo, system, pos, temp, dt, out, gpu, npt, interval, friction, **args):
-    integrator = LangevinIntegrator(temp*kelvin, friction/picosecond, dt*femtosecond)
-    # integrator= VerletIntegrator(dt*femtosecond)
-    if npt:
-        # add barostat
-        logging.info("Adding Barostat")
-        barostat = MonteCarloBarostat(1 * bar, temp * kelvin)
-        system.addForce(barostat)
+def get_simulation(topo, system, pos, temp, dt, out, gpu, **args):
+    # integrator = LangevinIntegrator(temp*kelvin, 1/picosecond, dt*femtosecond)
+    integrator= VerletIntegrator(dt*femtosecond)
     platform = Platform.getPlatformByName('HIP')
     simulation = Simulation(topo, system, integrator, platform, {'DeviceIndex': str(gpu)})
     simulation.context.setPositions(pos.tolist() * angstrom)
     simulation.context.setVelocitiesToTemperature(temp * kelvin)
-    trajectory_path = os.path.join(out, 'trajectory.dcd')
-    simulation.reporters.append(DCDReporter(trajectory_path, interval, enforcePeriodicBox=True,
-                                            append=os.path.exists(trajectory_path)))
+    simulation.reporters.append(DCDReporter(os.path.join(out, 'trajectory.dcd'), 1, enforcePeriodicBox=True))
     simulation.reporters.append(StateDataReporter(stdout, 1, step=True, temperature=True,
                                                   potentialEnergy=True, totalEnergy=True, density=True))
     return simulation
-
-def load_checkpoint(simulation, out_path):
-    chk_path = os.path.join(out_path, "simulation.chk")
-    step_path = os.path.join(out_path, "checkpoint.step")
-    if os.path.exists(chk_path) and os.path.exists(step_path):
-        logging.info(f"Found checkpoint {chk_path}, resuming simulation")
-        simulation.loadCheckpoint(chk_path)
-        with open(step_path) as f:
-            start_step = int(f.read())
-        return start_step
-    return 0
-
-def make_checkpoint(simulation, out_path, step):
-    chk_path = os.path.join(out_path, "simulation.chk")
-    step_path = os.path.join(out_path, "checkpoint.step")
-    simulation.saveCheckpoint(chk_path)
-    with open(step_path, "w") as f:
-        f.write(str(step))
-    logging.info(f"Saved checkpoint at step {step} to {chk_path}")
-
 
 
 if __name__ == '__main__':
@@ -160,8 +133,6 @@ if __name__ == '__main__':
         )
 
 
-        
-
 
     pdbf = PDBFile(pdb_start)
     topo = pdbf.topology
@@ -171,7 +142,6 @@ if __name__ == '__main__':
     module = TrIPModule(species, **vars(args))
     for param in module.parameters():
         param.requires_grad_(False)
-    
 
     pos = pdbf.getPositions(asNumpy=True) / angstrom
     pos = torch.tensor(pos, dtype=torch.float, device=device)
@@ -179,49 +149,31 @@ if __name__ == '__main__':
     boxsize = torch.tensor(boxsize, dtype=torch.float, device=device)
 
     # # Minimation procedure
-    if args.minimize and not os.path.exists(minimized_pdb):
+    if args.minimize:
         module.log_energy(pos, boxsize)
         logging.info('Beginning minimization')
         pos = module.minimize(pos, boxsize)
         module.log_energy(pos, boxsize)
         save_pdb(pos, topo, 'minimized', **vars(args))
         logging.info('Finished minimization!')
-    
 
-    # Run simulation
-    trip_force = get_trip_force()
-    system = get_system(topo, trip_force)
-    simulation = get_simulation(topo, system, pos, **vars(args))
+    # Run simulation with proper ML force evaluation
+    simulation, ml_force_handler = get_simulation_with_ml_force(topo, module, species, pos, **vars(args))
+    ml_force = simulation.system.getForce(0)  # Get the ML force we just added
     num_steps = int(1e6 * args.t / args.dt)  # 1e6 is the ratio of femtoseconds to nanoseconds
 
-    simulation_step = load_checkpoint(simulation, out_path)
-
     logging.info('Beginning simulation')
-    for i in range(simulation_step, num_steps, 1):
-        state = simulation.context.getState(getPositions=True, enforcePeriodicBox=True)
+    for i in range(num_steps):
+        # Update ML forces based on current positions
+        # This properly handles PBC since the ML model does the calculation
+        current_energy = ml_force_handler.update_forces(simulation.context, ml_force)
         
-        pos = torch.tensor([[p.x, p.y, p.z] for p in state.getPositions()],
-                            dtype=torch.float, device=device, requires_grad=True)*10.0 # Nanometer to Angstrom conversion
-        
-        box_length = state.getPeriodicBoxVectors()[0][0].value_in_unit(angstrom)
-        boxsize = torch.tensor([box_length, box_length, box_length], dtype=torch.float, device=device)
-
-        energy, forces = module(pos, boxsize)
-
-        # c = 627.5 * kilocalorie_per_mole * (energy + torch.sum(pos * forces)).item()/ len(pos) # Energy correction per atom
-        c = 2625.5 * kilojoule_per_mole * (energy + torch.sum(pos * forces)).item()/ len(pos) # Energy correction per atom
-        avg_energy = energy / len(pos) # Average energy per atom in kcal/mol
-        forces = forces * 2625.5 / 10 * kilojoule_per_mole / nanometer
-
-        for index, atom in enumerate(topo.atoms()):
-            trip_force.setParticleParameters(index, index, [c, *forces[index]])
-
-        trip_force.updateParametersInContext(simulation.context)
+        # Take one integration step
         simulation.step(1)
-
-        if (i+1) % args.interval == 0:
-            make_checkpoint(simulation, out_path, i)
-
+        
+        # Optional: log energy periodically for debugging
+        if i % 100 == 0:
+            logging.info(f'Step {i}: ML Energy = {current_energy:.6f} kJ/mol')
 
     logging.info('Simulation finished successfully')
 

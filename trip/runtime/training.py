@@ -211,7 +211,7 @@ def train(model: nn.Module,
     if args.load_ckpt_path and os.path.exists(args.load_ckpt_path):
         logging.info(f'Loading checkpoint from {args.load_ckpt_path}')
         epoch_start, optimizer = load_state(model, args.load_ckpt_path, optimizer, callbacks, args.load_weights_only)
-    elif args.r2_base_model_ckpt_path and os.path.exists(args.r2_base_model_ckpt_path):
+    elif args.r2_base_model_ckpt_path and os.path.exists(args.r2_base_model_ckpt_path) and not os.path.isdir(args.r2_base_model_ckpt_path):
         logging.info(f'Loading base model checkpoint from {args.r2_base_model_ckpt_path}')
         # using load state only to update model weights
         _, _ = load_state(model, args.r2_base_model_ckpt_path, optimizer, callbacks, weights_only=True)
@@ -231,7 +231,7 @@ def train(model: nn.Module,
         args.force_weight = args.r2_fw
 
         # continue round 2 training
-        if args.load_ckpt_path and not os.path.exists(args.load_ckpt_path):
+        if args.r2_base_model_ckpt_path and not os.path.exists(args.r2_base_model_ckpt_path):
             logging.info(f'Starting round 2 training')
             epoch_start = args.r2_epoch_start  # start round 2 training from the specified epoch
             # re-initialize the optimizer and scheduler with round 2 args
@@ -254,7 +254,8 @@ def train(model: nn.Module,
             train_dataloader.sampler.set_epoch(epoch_idx)
 
         
-        if not is_r2_training and epoch_idx >= args.r2_epoch_start:
+        if not is_r2_training and epoch_idx >= args.r2_epoch_start \
+            and os.path.exists(args.r2_base_model_ckpt_path) and not os.path.isdir(args.r2_base_model_ckpt_path):
             logging.info(f'Starting round 2 training at epoch {epoch_idx}')
             is_r2_training = True
             # re-initialize the optimizer and scheduler with round 2 args

@@ -10,7 +10,8 @@ import time
 import torchani
 
 from trip.data_loading import GraphConstructor
-from trip.model import TrIP
+# Import the TorchScript-friendly TrIP implementation explicitly for OpenMMTorch integration
+from trip.model.model_openmmtorch import TrIP as TrIPTorchScript
 
 
 class TrIPModule(torch.nn.Module):
@@ -158,43 +159,63 @@ class TrIPModule(torch.nn.Module):
 # import numpy as np
 # import time
 
-# import torchani
 
-# from trip.data_loading import GraphConstructor
-# from trip.model import TrIP
+from trip.data_loading import GraphConstructor
+from trip.model import TrIP
 
-# class TripOpenmmTorchForceModule(torch.nn.Module):
-#     def __init__(self, species, model_file, map_location="cuda:0" ):
-#         super().__init__()
-#         self.species_tensor = torch.tensor(species, dtype=torch.long)
-#         self.model = TrIP.load(model_file, map_location=map_location)
-#         self.model.si_tensor = self.model.si_tensor.to(self.species_tensor.device)  # Ensure si_tensor is on the same device
-#         self.graph_constructor = GraphConstructor(cutoff=self.model.cutoff)
-#         self.ha_to_kJmol = 2625.5  # Conversion factor from Hartree to kJ/mol
-    
-#     def forward(self, positions: torch.Tensor, boxvectors: torch.Tensor):
-#         """The forward method returns the energy computed from positions.
+class TripOpenmmTorchForceModule(torch.nn.Module):
+    """Wrapper to use the TorchScript-friendly TrIP model inside OpenMMTorch.
 
-#         Parameters
-#         ----------
-#         positions : torch.Tensor with shape (nparticles,3)
-#            positions[i,k] is the position (in nanometers) of spatial dimension k of particle i
-#         boxvectors : torch.tensor with shape (3,3)
-#            boxvectors[i,k] is the box vector component k (in nanometers) of box vector i
+    Notes
+    -----
+    - Positions passed in are in nanometers; TrIP was trained using Angstrom units.
+      We therefore convert positions_nm -> positions_A by *10 before constructing
+      the graph for the model.
+    - Forces returned by the model are dE/d(Angstrom); physical forces w.r.t. nm
+      require chain rule multiplication by 10.
+    - Energy units: model returns Hartree; OpenMM expects kJ/mol.
+    - Force units: model returns Hartree/Angstrom.
+        Convert: Hartree/Angstrom * (2625.5 kJ/mol / Hartree) * (10 Angstrom / nm)
+                = factor 26255.0 kJ/mol/nm.
+    """
+    def __init__(self, species, model_file, map_location: str = "cuda:0"):
+        super().__init__()
+        device = torch.device(map_location if torch.cuda.is_available() else "cpu")
+        self.species_tensor = torch.tensor(species, dtype=torch.long, device=device)
+        # Load the explicit-args TrIP implementation
+        self.model = TrIPTorchScript.load(model_file, map_location=device)
+        # Guard si_tensor (may be None depending on checkpoint)
+        if getattr(self.model, 'si_tensor', None) is not None:
+            self.model.si_tensor = self.model.si_tensor.to(device)
+        
+        self.graph_constructor = GraphConstructor(cutoff=self.model.cutoff)
+        self.ha_to_kJmol = 2625.5  # Conversion factor from Hartree to kJ/mol
+        self.force_unit_factor = self.ha_to_kJmol / 10.0  # Hartree/Å -> kJ/mol/nm
 
-#         Returns
-#         -------
-#         potential : torch.Scalar
-#            The potential energy (in kJ/mol)
-#         """
-#         boxsize=boxvectors.diag() * 10.0 # convert from nm to Angstrom
-#         graph = self.graph_constructor.create_graphs(positions, boxsize)
-#         graph.ndata['species'] = self.species_tensor
-#         energy, forces = self.model(graph, forces=True)
-#         if isinstance(energy, torch.Tensor):
-#             print("Energy is a tensor, converting to scalar.")
-#             energy = energy.item()
-#         return energy * self.ha_to_kJmol, forces * self.ha_to_kJmol  # return value must be kJ/mol
+    def forward(self, positions: torch.Tensor, boxvectors: torch.Tensor):
+        """Return potential energy (kJ/mol) and forces (kJ/mol/nm).
+
+        Parameters
+        ----------
+        positions : (N,3) tensor in nanometers
+        boxvectors : (3,3) tensor in nanometers
+        """
+        # Convert to Angstrom for model
+        positions_angstrom = positions * 10.0
+        positions_angstrom = positions_angstrom.requires_grad_(True)
+        boxsize = boxvectors.diag() * 10.0  # (nm -> Å)
+        graph = self.graph_constructor.create_graphs(positions_angstrom, boxsize)
+        graph.ndata['species'] = self.species_tensor
+        energy, forces = self.model(graph, forces=True)
+        if isinstance(energy, torch.Tensor):
+            energy_val = energy.item()
+        else:
+            energy_val = float(energy)
+        # Convert energy Hartree -> kJ/mol
+        energy_kJmol = energy_val * self.ha_to_kJmol
+        # Convert forces Hartree/Å -> kJ/mol/nm (includes chain rule factor 10)
+        forces_kJmol_per_nm = forces * self.force_unit_factor
+        return energy_kJmol, forces_kJmol_per_nm
         
 
 
