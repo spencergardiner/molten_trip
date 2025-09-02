@@ -11,7 +11,7 @@ from trip.model import TrIP
 
 
 class TrIPModule(torch.nn.Module):
-    def __init__(self, species, model_file, gpu, constraints=[], **vars):
+    def __init__(self, species, model_file, gpu, constraints=[], low_memory=False, **kwargs):
         super().__init__() 
         self.device = f'cuda:{gpu}'
         self.species_tensor = torch.tensor(species, dtype=torch.long, device=self.device)
@@ -23,6 +23,7 @@ class TrIPModule(torch.nn.Module):
             self.model = TrIP.load(model_file, map_location=self.device)
             self.graph_constructor = GraphConstructor(cutoff=self.model.cutoff)
             self.forward = self.trip_forward
+            self.graph_constructor = GraphConstructor(cutoff=self.model.cutoff)
 
     def trip_forward(self, pos, boxsize, forces=True):
         graph = self.graph_constructor.create_graphs(pos, boxsize)  # Cutoff for 5-12 model is 3.0 A
@@ -75,7 +76,7 @@ class TrIPModule(torch.nn.Module):
     def log_energy(self, pos, boxsize):
         with torch.no_grad():
             energy = self.forward(pos, boxsize, forces=False)
-        logging.info(f'Energy: {energy*627.5:.2f}')
+        logging.info(f'Energy (kcal/mol): {energy*627.5:.2f}')
 
     def calc_constraints(self, pos):
         return sum([constraint(pos) for constraint in self.constraints])

@@ -203,6 +203,13 @@ def main(args: argparse.Namespace):
     
     # iterate through all species pairs
     for species_1, species_2 in species_pairs:
+        # Skip if output file already exists
+        output_file = output_dir / f'interatomic_distance_{convert_atomic_number_to_symbol(species_1)}_{convert_atomic_number_to_symbol(species_2)}.png'
+        if output_file.exists():
+            print(f"Output file {output_file} already exists. Skipping species pair: {convert_atomic_number_to_symbol(species_1)}-{convert_atomic_number_to_symbol(species_2)}")
+            continue
+
+
         # Run inference for the current species pair
         outputs = run_stepped_interatomic_inference(
             model,

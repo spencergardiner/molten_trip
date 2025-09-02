@@ -7,6 +7,6 @@ MODEL_NAME="big_model_gamma_75_16_epochs"
 
 python -m analysis.generate_interatomic_distance_plots \
 --checkpoint_path "/mnt/trip/models/${MODEL_NAME}.pth" \
---species "Li" "F" \
+--species "Li" "F" "K" "Na" "Be" \
 --device "cuda:0" \
 --output_dir "/mnt/trip/analysis/interatomic_distance_plots/${MODEL_NAME}" \
